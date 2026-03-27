@@ -1,0 +1,107 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      ec2_host:
+        description: 'EC2 public IP or DNS'
+        required: true
+      ssh_username:
+        description: 'EC2 SSH username (e.g. student01)'
+        required: true
+        default: 'student'
+      student_number:
+        description: 'Student number (81-90) — maps to port 808<Student Number>'
+        required: true
+        default: '81'
+
+env:
+  APP_NAME: go-fibonacci-api
+  OVERLAY: dev
+
+jobs:
+  build-test-docker:
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/go-fibonacci-api
+
+    outputs:
+      IMAGE_REF: ${{ steps.vars.outputs.IMAGE_REF }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: 1.24
+
+      - name: Verify Go installation
+        run: go version
+
+      - name: Initialize Go module (if needed)
+        run: |
+          if [ ! -f go.mod ]; then
+            go mod init go-fibonacci-api
+          fi
+
+      - name: Build the Go application
+        run: CGO_ENABLED=0 go build -o main .
+
+      - name: Run unit tests
+        run: CGO_ENABLED=0 go test -v ./...
+
+      - name: Get short SHA
+        id: vars
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "IMAGE_REF=$IMAGE_NAME:$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: docker build -t ${{ steps.vars.outputs.IMAGE_REF }} .
+
+      - name: Push Docker image
+        run: docker push ${{ steps.vars.outputs.IMAGE_REF }}
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-test-docker
+    runs-on: ubuntu-latest
+    environment: student-deploy
+
+    steps:
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Deploy container
+        run: |
+          PORT="80${{ inputs.student_number }}"
+          sshpass -p "${{ secrets.STUDENT_PASSWORD }}" \
+            ssh -o StrictHostKeyChecking=no \
+                "${{ inputs.ssh_username }}@${{ inputs.ec2_host }}" \
+                "IMAGE_REF='${{ needs.build-test-docker.outputs.IMAGE_REF }}' PORT='${PORT}' bash -s" << 'EOF'
+          set -euo pipefail
+
+          echo "Pulling image: ${IMAGE_REF}"
+          docker pull "${IMAGE_REF}"
+
+          echo "Stopping any container publishing port ${PORT} (if any)..."
+          docker ps -q --filter "publish=${PORT}" | xargs -r docker stop
+
+          echo "Running container on host port ${PORT} -> container 8080..."
+          docker run -d -p "${PORT}:8080" "${IMAGE_REF}"
+
+          echo "Current containers:"
+          docker ps --format 'table {{.ID}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}'
+          EOF
