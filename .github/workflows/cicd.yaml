@@ -30,7 +30,7 @@ jobs:
       IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/go-fibonacci-api
 
     outputs:
-      IMAGE_REF: ${{ steps.vars.outputs.IMAGE_REF }}
+      SHORT_SHA: ${{ steps.vars.outputs.SHORT_SHA }}
 
     steps:
       - name: Checkout code
@@ -60,6 +60,7 @@ jobs:
         id: vars
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "IMAGE_REF=$IMAGE_NAME:$SHORT_SHA" >> $GITHUB_OUTPUT
 
       - name: Log in to Docker Hub
@@ -90,7 +91,7 @@ jobs:
           SSH_USER="${{ inputs.ssh_username || secrets.SSH_USERNAME }}"
           STUDENT_NUM="${{ inputs.student_number || secrets.STUDENT_NUMBER }}"
           PORT="80${STUDENT_NUM}"
-          IMAGE_REF="${{ needs.build-test-docker.outputs.IMAGE_REF }}"
+          IMAGE_REF="${{ secrets.DOCKERHUB_USERNAME }}/go-fibonacci-api:${{ needs.build-test-docker.outputs.SHORT_SHA }}"
           sshpass -p "${{ secrets.STUDENT_PASSWORD }}" \
             ssh -o StrictHostKeyChecking=no \
                 "${SSH_USER}@${EC2_HOST}" \
