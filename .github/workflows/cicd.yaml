@@ -86,10 +86,13 @@ jobs:
 
       - name: Deploy container
         run: |
-          PORT="80${{ inputs.student_number }}"
+          EC2_HOST="${{ inputs.ec2_host || secrets.EC2_HOST }}"
+          SSH_USER="${{ inputs.ssh_username || secrets.SSH_USERNAME }}"
+          STUDENT_NUM="${{ inputs.student_number || secrets.STUDENT_NUMBER }}"
+          PORT="80${STUDENT_NUM}"
           sshpass -p "${{ secrets.STUDENT_PASSWORD }}" \
             ssh -o StrictHostKeyChecking=no \
-                "${{ inputs.ssh_username }}@${{ inputs.ec2_host }}" \
+                "${SSH_USER}@${EC2_HOST}" \
                 "IMAGE_REF='${{ needs.build-test-docker.outputs.IMAGE_REF }}' PORT='${PORT}' bash -s" << 'EOF'
           set -euo pipefail
 
